@@ -21,6 +21,9 @@ import base64
 import os
 import urllib.parse
 import time
+import math
+import wave
+from array import array
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageDraw, ImageFont
@@ -789,328 +792,164 @@ def inject_wallpaper_css(top_emotion: str):
     st.markdown(css_html, unsafe_allow_html=True)
 
 
-def inject_bgm_audio(top_emotion: str):
-    """向页面注入基于 Web Audio API 的生成式情绪背景音乐。
+@st.cache_data(show_spinner=False)
+def _generate_wav_audio_cached(top_emotion: str) -> str:
+    """"用 Python 生成情绪氛围 WAV 音频（带 Streamlit 缓存）。
 
-    每种情绪对应不同的音阶（scale）、BPM、波形和节奏模式。
-    使用 Web Audio API 实时合成，无需任何外部音频文件。
-    包含播放/暂停按钮和音量控制。
+    返回：data:audio/wav;base64,... 格式字符串
     """
     bgm = EMOTION_BGM.get(top_emotion, EMOTION_BGM["快乐"])
     scale = bgm["scale"]
     bpm = bgm["bpm"]
-    wave = bgm["wave"]
+    wave_type = bgm["wave"]
+    sample_rate = 22050
+    duration = 8.0
+    total_samples = int(sample_rate * duration)
+    scale_len = len(scale)
+
+    def gen(t: float, freq: float, vol: float, wtype: str) -> float:
+        phase = 2.0 * math.pi * freq * t
+        wmap = {
+            "sine": math.sin(phase),
+            "triangle": (2.0 / math.pi) * math.asin(math.sin(phase)),
+            "sawtooth": 2.0 * ((freq * t) % 1.0) - 1.0,
+            "square": 1.0 if math.sin(phase) >= 0 else -1.0,
+        }
+        return vol * wmap.get(wtype, math.sin(phase))
+
+    buf_l = [0.0] * total_samples
+
+    # Layer 1: 低音 Drone（带颤音）
+    df = scale[0] / 2.0
+    for i in range(total_samples):
+        t_i = i / sample_rate
+        tremolo = 1.0 + 0.12 * math.sin(2.0 * math.pi * 0.38 * t_i)
+        buf_l[i] += gen(t_i, df, 0.09 * tremolo, "sine")
+
+    # Layer 2: 根音泛音
+    for i in range(total_samples):
+        buf_l[i] += gen(i / sample_rate, scale[0], 0.04, "sine")
+
+    # Layer 3: 旋律（音阶随机漫步 + 强弱拍节奏）
+    beat_dur = 60.0 / bpm / 2.0
+    notes_per_bar = 8
+    mel_idx = scale_len // 2
+    rng = random.Random(hash(top_emotion) + sum(ord(c) for c in top_emotion))
+
+    notes = []  # (start_sample, end_sample, freq, vol)
+    t_i = 0.0
+    nc = 0
+    while t_i < duration:
+        bp = nc % notes_per_bar
+        if bp in (0, 4):          # 强拍
+            freq, vol, nlen = scale[mel_idx], 0.15, beat_dur * 1.6
+            if rng.random() < 0.3:
+                hi = min(scale_len - 1, mel_idx + 2)
+                hi_s = int(t_i * sample_rate)
+                hi_e = int((t_i + nlen * 0.7) * sample_rate)
+                notes.append((hi_s, hi_e, scale[hi], 0.05))
+        elif bp in (2, 6):        # 中拍
+            freq, vol, nlen = scale[mel_idx], 0.07, beat_dur * 1.1
+        else:                      # 弱拍 — 偶尔轻触根音
+            freq, vol, nlen = 0, 0, beat_dur
+            if rng.random() < 0.25:
+                freq, vol, nlen = scale[0], 0.035, beat_dur * 0.6
+
+        if vol > 0 and freq > 0:
+            s_s = int(t_i * sample_rate)
+            e_s = int((t_i + nlen) * sample_rate)
+            notes.append((s_s, e_s, freq, vol))
+
+        # 随机漫步，偏向音阶中心
+        center = scale_len // 2
+        pull = (center - mel_idx) * 0.18
+        mel_idx = max(0, min(scale_len - 1, mel_idx + round((rng.random() - 0.5) * 2.2 + pull)))
+        t_i += beat_dur
+        nc += 1
+
+    for s_s, e_s, freq, vol in notes:
+        s_s = max(0, min(total_samples - 1, s_s))
+        e_s = max(s_s + 1, min(total_samples, e_s))
+        for i in range(s_s, e_s):
+            progress = (i - s_s) / max(1, e_s - s_s)
+            attack = min(1.0, progress / 0.02)
+            release = max(0.0, 1.0 - (progress - 0.55) / 0.45) if progress > 0.55 else 1.0
+            env = attack * release
+            buf_l[i] += gen(i / sample_rate, freq, vol * env, wave_type)
+
+    # 末尾淡出（便于无缝循环）
+    fs = int(sample_rate * 6.8)
+    for i in range(fs, total_samples):
+        buf_l[i] *= 1.0 - (i - fs) / (total_samples - fs)
+
+    # 归一化 → 16-bit PCM
+    peak = max(max(abs(v) for v in buf_l), 0.001)
+    gain = 0.70 / peak
+    samples_16 = array('h', (int(max(-1.0, min(1.0, v * gain)) * 32767) for v in buf_l))
+
+    bio = io.BytesIO()
+    with wave.open(bio, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(samples_16.tobytes())
+    bio.seek(0)
+    return f"data:audio/wav;base64,{base64.b64encode(bio.read()).decode()}"
+
+
+def inject_bgm_audio(top_emotion: str):
+    """注入情绪 BGM 播放器——Python 生成 WAV → HTML5 <audio> 标签。
+
+    在 Streamlit 中可靠运行，不依赖会被过滤的 <script> 标签。
+    """
+    bgm = EMOTION_BGM.get(top_emotion, EMOTION_BGM["快乐"])
     name = bgm["name"]
     desc = bgm["description"]
+    bpm = bgm["bpm"]
+    wave = bgm["wave"]
+    audio_b64 = _generate_wav_audio_cached(top_emotion)
 
-    html_code = f'''
-    <!-- 🎵 情绪 BGM 播放器 -->
-    <style>
-    .bgm-player {{
-        position: fixed;
-        bottom: 24px;
-        right: 24px;
-        z-index: 9999;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        background: rgba(255,255,255,0.88);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(0,0,0,0.08);
-        border-radius: 40px;
-        padding: 8px 18px 8px 8px;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.10);
-        font-family: system-ui, -apple-system, sans-serif;
-        transition: all 0.3s ease;
-        user-select: none;
-    }}
-    .bgm-player:hover {{
-        box-shadow: 0 6px 32px rgba(0,0,0,0.14);
-        transform: translateY(-2px);
-    }}
-    .bgm-btn {{
-        width: 42px; height: 42px;
-        border-radius: 50%;
-        border: none;
-        background: linear-gradient(135deg, #6C5CE7, #A29BFE);
-        color: #fff;
-        font-size: 18px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: all 0.25s ease;
-        flex-shrink: 0;
-    }}
-    .bgm-btn:hover {{ transform: scale(1.08); }}
-    .bgm-btn.playing {{
-        background: linear-gradient(135deg, #F19066, #F5B08A);
-        animation: bgmPulse 2s ease-in-out infinite;
-    }}
-    @keyframes bgmPulse {{
-        0%, 100% {{ box-shadow: 0 0 0 0 rgba(241,144,102,0.4); }}
-        50%      {{ box-shadow: 0 0 0 12px rgba(241,144,102,0); }}
-    }}
-    .bgm-info {{
-        display: flex;
-        flex-direction: column;
-        min-width: 80px;
-    }}
-    .bgm-name {{
-        font-size: 13px;
-        font-weight: 600;
-        color: #333;
-        line-height: 1.2;
-    }}
-    .bgm-desc {{
-        font-size: 10px;
-        color: #999;
-        line-height: 1.3;
-        max-width: 160px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }}
-    .bgm-vol {{
-        width: 60px;
-        accent-color: #6C5CE7;
-        cursor: pointer;
-    }}
-    @media (max-width: 600px) {{
-        .bgm-player {{
-            bottom: 12px;
-            right: 10px;
-            padding: 6px 12px 6px 6px;
-            gap: 6px;
+    st.markdown(
+        f'''
+        <style>
+        .bgm-card {{
+            position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+            background: rgba(255,255,255,0.92); backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(108,92,231,0.10);
+            border-radius: 14px; padding: 10px 14px;
+            box-shadow: 0 4px 28px rgba(0,0,0,0.10);
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 260px; transition: all 0.3s ease;
         }}
-        .bgm-desc {{ display: none; }}
-        .bgm-vol {{ width: 40px; }}
-    }}
-    </style>
-
-    <div class="bgm-player" id="bgm-player">
-        <button class="bgm-btn" id="bgm-btn" title="播放 / 暂停">▶</button>
-        <div class="bgm-info">
-            <span class="bgm-name">🎵 {name}</span>
-            <span class="bgm-desc">{desc}</span>
+        .bgm-card:hover {{ box-shadow: 0 8px 36px rgba(108,92,231,0.15); transform: translateY(-2px); }}
+        .bgm-header {{ display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }}
+        .bgm-name {{ font-size: 13px; font-weight: 700; color: #333; }}
+        .bgm-badge {{
+            font-size: 10px; background: linear-gradient(135deg, #6C5CE7, #A29BFE);
+            color: #fff; padding: 2px 7px; border-radius: 8px; white-space: nowrap;
+        }}
+        .bgm-desc {{ font-size: 10px; color: #888; margin-bottom: 6px; line-height: 1.3; }}
+        .bgm-audio {{ width: 100%; height: 30px; border-radius: 8px; }}
+        @media (max-width: 600px) {{
+            .bgm-card {{ bottom: 8px; right: 4px; left: 4px; max-width: none; padding: 8px 10px; }}
+            .bgm-desc {{ display: none; }}
+        }}
+        </style>
+        <div class="bgm-card">
+            <div class="bgm-header">
+                <span>🎵</span>
+                <span class="bgm-name">{name}</span>
+                <span class="bgm-badge">{bpm}bpm</span>
+                <span class="bgm-badge" style="background:linear-gradient(135deg,#F19066,#F5B08A);">{wave}</span>
+            </div>
+            <div class="bgm-desc">{desc}</div>
+            <audio class="bgm-audio" controls autoplay loop preload="auto">
+                <source src="{audio_b64}" type="audio/wav">
+            </audio>
         </div>
-        <input type="range" class="bgm-vol" id="bgm-vol"
-               min="0" max="100" value="30" title="音量">
-    </div>
-
-    <script>
-    (function() {{
-        // 防止重复初始化
-        if (window._bgmInitialized) return;
-        window._bgmInitialized = true;
-
-        // --- Web Audio 引擎 ---
-        let audioCtx = null;
-        let bgmRunning = false;
-        let bgmTimer = null;
-        let masterGain = null;
-        let currentVolume = 0.3;
-
-        const scale = {scale};
-        const bpm = {bpm};
-        const waveType = "{wave}";
-        const beatInterval = 60000 / bpm / 2; // 八分音符间隔(ms)
-
-        function ensureContext() {{
-            if (!audioCtx) {{
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                masterGain = audioCtx.createGain();
-                masterGain.gain.value = currentVolume;
-                masterGain.connect(audioCtx.destination);
-            }}
-            if (audioCtx.state === 'suspended') {{
-                audioCtx.resume();
-            }}
-            return audioCtx;
-        }}
-
-        function playNote(freq, startTime, duration, vel) {{
-            const ctx = ensureContext();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-
-            osc.type = waveType;
-            osc.frequency.setValueAtTime(freq, startTime);
-
-            // 包络：柔和起音 + 自然衰减
-            const attack = 0.015;
-            const release = duration * 0.4;
-            gain.gain.setValueAtTime(0, startTime);
-            gain.gain.linearRampToValueAtTime(vel * currentVolume, startTime + attack);
-            gain.gain.setValueAtTime(vel * currentVolume, startTime + duration - release);
-            gain.gain.linearRampToValueAtTime(0.0001, startTime + duration);
-
-            // 加一点混响感：轻微频率抖动
-            osc.detune.setValueAtTime(0, startTime);
-            osc.detune.linearRampToValueAtTime(
-                (Math.random() - 0.5) * 6, startTime + duration * 0.5
-            );
-
-            osc.connect(gain);
-            gain.connect(masterGain);
-            osc.start(startTime);
-            osc.stop(startTime + duration + 0.05);
-        }}
-
-        // --- 旋律生成器：基于情绪音阶的随机漫步 ---
-        let melodyIndex = Math.floor(scale.length / 2);
-        let melodyStep = 0;
-
-        function pickNextNote() {{
-            // 随机漫步，偏向音阶中心
-            const center = Math.floor(scale.length / 2);
-            const pull = (center - melodyIndex) * 0.15;
-            const step = Math.round((Math.random() - 0.5) * 2.4 + pull);
-            melodyIndex = Math.max(0, Math.min(scale.length - 1, melodyIndex + step));
-            return scale[melodyIndex];
-        }}
-
-        // --- Low drone: 低音持续音 ---
-        function startDrone() {{
-            const ctx = ensureContext();
-            const droneFreq = scale[0] / 2; // 低八度
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sine';
-            osc.frequency.value = droneFreq;
-            gain.gain.value = currentVolume * 0.12;
-            osc.connect(gain);
-            gain.connect(masterGain);
-            osc.start();
-            window._bgmDrone = osc;
-            window._bgmDroneGain = gain;
-        }}
-
-        function stopDrone() {{
-            if (window._bgmDrone) {{
-                try {{ window._bgmDrone.stop(); }} catch(e) {{}}
-                window._bgmDrone = null;
-            }}
-        }}
-
-        // --- 节拍 loop ---
-        let beatCount = 0;
-        function scheduleLoop() {{
-            if (!bgmRunning) return;
-
-            const now = audioCtx.currentTime;
-
-            // 每拍演奏一个音符（部分拍为休止/弱音）
-            const notesPerBar = 8;
-            for (let i = 0; i < notesPerBar; i++) {{
-                const t = now + i * beatInterval / 1000;
-                const barPos = (beatCount + i) % notesPerBar;
-
-                // 节奏模式：强拍在第0,2,4,6位置，第1,3,5,7为弱拍或休止
-                let vel = 0;
-                if (barPos === 0 || barPos === 4) {{
-                    // 强拍：主旋律音
-                    const freq = pickNextNote();
-                    playNote(freq, t, 0.35, 0.22);
-                    // 偶尔加一个高音泛音
-                    if (Math.random() < 0.35) {{
-                        const harmonic = scale[Math.min(scale.length-1, melodyIndex+2)];
-                        playNote(harmonic, t + 0.02, 0.28, 0.10);
-                    }}
-                    vel = 0.22;
-                }} else if (barPos === 2 || barPos === 6) {{
-                    // 中拍：轻音
-                    const freq = scale[melodyIndex];
-                    playNote(freq, t, 0.22, 0.10);
-                    vel = 0.10;
-                }} else {{
-                    // 弱拍：极轻的根音泛音
-                    if (Math.random() < 0.3) {{
-                        playNote(scale[0], t, 0.15, 0.05);
-                    }}
-                }}
-
-                melodyStep++;
-                // 每隔几小节重新校准中心
-                if (melodyStep % 32 === 0) {{
-                    melodyIndex = Math.floor(scale.length / 2) +
-                        Math.floor((Math.random() - 0.5) * 3);
-                }}
-            }}
-
-            beatCount += notesPerBar;
-
-            // 根据 BPM 动态调度下一轮
-            const loopMs = notesPerBar * beatInterval;
-            bgmTimer = setTimeout(scheduleLoop, loopMs - 10); // 略早10ms防止漂移
-        }}
-
-        // --- 播放/暂停控制 ---
-        const btn = document.getElementById('bgm-btn');
-        const volSlider = document.getElementById('bgm-vol');
-
-        function startBGM() {{
-            ensureContext();
-            bgmRunning = true;
-            btn.textContent = '⏸';
-            btn.classList.add('playing');
-            startDrone();
-            beatCount = 0;
-            melodyIndex = Math.floor(scale.length / 2);
-            scheduleLoop();
-        }}
-
-        function stopBGM() {{
-            bgmRunning = false;
-            btn.textContent = '▶';
-            btn.classList.remove('playing');
-            stopDrone();
-            if (bgmTimer) {{
-                clearTimeout(bgmTimer);
-                bgmTimer = null;
-            }}
-        }}
-
-        btn.addEventListener('click', () => {{
-            if (bgmRunning) {{
-                stopBGM();
-            }} else {{
-                startBGM();
-            }}
-        }});
-
-        // --- 音量控制 ---
-        volSlider.addEventListener('input', () => {{
-            currentVolume = parseFloat(volSlider.value) / 100;
-            if (masterGain) {{
-                masterGain.gain.setValueAtTime(currentVolume, audioCtx.currentTime + 0.02);
-            }}
-            if (window._bgmDroneGain) {{
-                window._bgmDroneGain.gain.setValueAtTime(
-                    currentVolume * 0.12, audioCtx.currentTime + 0.02
-                );
-            }}
-        }});
-
-        // --- 页面卸载清理 ---
-        window.addEventListener('beforeunload', () => {{
-            stopBGM();
-            if (audioCtx) {{
-                audioCtx.close();
-            }}
-        }});
-
-        // --- 自动开始（用户已与页面交互） ---
-        setTimeout(() => {{
-            startBGM();
-        }}, 800);
-
-        console.log('🎵 情绪 BGM 已就绪：「{name}」| BPM={bpm} | {wave}波 | {desc}');
-    }})();
-    </script>
-    '''
-    st.markdown(html_code, unsafe_allow_html=True)
+        ''',
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================
