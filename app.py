@@ -830,17 +830,12 @@ with tab_create:
         )
 
     with st.form(key="mood_form", clear_on_submit=False):
-        c1, c2, _ = st.columns([6, 1])
-        with c1:
-            user_input = st.text_area(
-                "💬 今天心情如何？",
-                placeholder="比如：今天阳光很好，走在路上收到了意外的礼物，心里暖暖的...",
-                height=100, max_chars=500, key="mood_input",
-                label_visibility="collapsed",
-            )
-        with c2:
-            # 占位，让按钮和输入框顶端对齐
-            st.write("")
+        user_input = st.text_area(
+            "💬 今天心情如何？",
+            placeholder="比如：今天阳光很好，走在路上收到了意外的礼物，心里暖暖的...",
+            height=100, max_chars=500, key="mood_input",
+            label_visibility="collapsed",
+        )
         col_btn, col_tip, _, _ = st.columns([1, 2, 1, 1])
         with col_btn:
             submitted = st.form_submit_button("✨ 生成", type="primary", use_container_width=True)
