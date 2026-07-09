@@ -74,8 +74,7 @@ EMOTION_COLORS = {
     "信任": "#A8E06C",  # 嫩绿色 — 安心的信赖
 }
 
-# 站点URL（用于二维码，优先从secrets读取）
-SITE_URL = "https://emotion-pixel.streamlit.app"
+import random
 
 # ============================================================
 # 情绪 → 二次元插画画风映射（用于 Pollinations.ai prompt 构造）
@@ -114,6 +113,73 @@ EMOTION_ANIME_STYLES = {
         "en": "peaceful meadow, gentle green, harmony, trust",
     },
 }
+
+# ============================================================
+# 二次元插画随机元素库 — 大幅提升每次生成的多样性
+# ============================================================
+
+# 画风库（每次随机选一种）
+ART_STYLES = [
+    "Ghibli style, hand-drawn animation, soft watercolor background",
+    "90s retro anime, cel shading, grainy film texture, nostalgic",
+    "cyberpunk anime, neon lights, futuristic city, holographic effects",
+    "shoujo manga style, sparkly eyes, floral frames, pastel romance",
+    "Makoto Shinkai style, photorealistic lighting, lens flare, vibrant sky",
+    "watercolor illustration, ink wash, flowing brush strokes, poetic",
+    "chibi kawaii style, cute, big head, pastel colors, adorable",
+    "dark fantasy anime, gothic, intricate details, dramatic shadows",
+    "ukiyo-e inspired, Japanese woodblock print style, flat colors, bold lines",
+    "vaporwave aesthetic, synthwave, retro 80s, glitch effects, neon pink",
+    "minimalist line art, ink sketch, black and white with single color accent",
+    "pop art anime, bold halftone dots, comic panel style, vibrant",
+]
+
+# 场景库（每次随机选一种）
+SCENE_TYPES = [
+    "cherry blossom garden with petals falling in spring breeze",
+    "quiet classroom at sunset, golden light through windows",
+    "rooftop of a tall building overlooking a neon city at night",
+    "seaside cliff with waves crashing and seagulls circling",
+    "ancient shrine gate in a misty bamboo forest",
+    "cozy attic room filled with books, warm lamp light, rainy outside",
+    "train platform at dusk, empty bench, distant mountains",
+    "flower field under starry night sky with shooting stars",
+    "underwater palace with glowing jellyfish and coral reefs",
+    "abandoned overgrown greenhouse with sunlight streaming through glass",
+    "busy festival street with lanterns, fireworks in the night sky",
+    "snow-covered village with warm lights from cottage windows",
+    "floating sky islands connected by rope bridges, clouds below",
+    "vintage arcade room with CRT screens and neon reflections",
+    "dreamlike mirror dimension with floating clocks and endless stairs",
+]
+
+# 构图/镜头库（每次随机选一种）
+CAMERA_ANGLES = [
+    "close-up portrait, focusing on eyes and expression",
+    "full body shot, dynamic pose, wind blowing hair and clothes",
+    "medium shot, sitting casually, looking off to the side",
+    "wide angle landscape, tiny character in vast scenery",
+    "dutch angle, tilted camera, dramatic tension",
+    "over-the-shoulder view, looking at distant scenery",
+    "low angle, looking up, heroic, dramatic sky behind",
+    "bird's eye view, looking down, detailed environment",
+    "side profile silhouette against bright background",
+    "reflection in a puddle or mirror, dreamlike double image",
+]
+
+# 色彩方案库（每次随机选一种）
+COLOR_PALETTES = [
+    "soft warm pastel colors, gentle and dreamy",
+    "high saturation, vivid colors, bold and energetic",
+    "monochromatic blue tones, melancholic and calm",
+    "golden hour warm oranges and yellows, nostalgic",
+    "muted earth tones, natural and grounded",
+    "neon purple and cyan, electric and futuristic",
+    "soft pink and mint green, cute and refreshing",
+    "deep crimson and black, intense and dramatic",
+    "cream and sepia, vintage photograph feel",
+    "rainbow spectrum, magical and fantastical",
+]
 
 # ============================================================
 # 工具函数
@@ -379,6 +445,7 @@ def generate_fingerprint(scores: dict) -> str:
 def generate_anime_art(scores: dict, user_text: str) -> Image.Image:
     """
     根据情绪分数调用 Pollinations.ai 免费 API 生成二次元插画。
+    每次从随机元素库中抽取不同组合，确保每张图都独一无二。
     Pollinations.ai 无需 API Key，完全免费。
 
     参数:
@@ -389,30 +456,63 @@ def generate_anime_art(scores: dict, user_text: str) -> Image.Image:
         PIL.Image: 512×512 的二次元插画（生成失败时返回占位图）
     """
     try:
-        # ---- Step 1: 找出主导情绪（分数最高的）----
-        top_emotion = max(scores, key=scores.get)
-        style = EMOTION_ANIME_STYLES[top_emotion]
+        # ---- Step 1: 用情绪分数作为种子，确保同一输入同一画面 ----
+        raw_fingerprint = "-".join([str(scores[e]) for e in EMOTIONS])
+        seed = sum(ord(c) for c in raw_fingerprint) + sum(ord(c) for c in user_text[:20])
+        rng = random.Random(seed)
 
-        # ---- Step 2: 构造 Prompt ----
-        # 中英混合 prompt，因为 Pollinations 对两种语言都支持
+        # ---- Step 2: 找出主导和次主导情绪 ----
+        sorted_emotions = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        top_emotion = sorted_emotions[0][0]
+        second_emotion = sorted_emotions[1][0]
+        style_primary = EMOTION_ANIME_STYLES[top_emotion]
+        style_secondary = EMOTION_ANIME_STYLES[second_emotion]
+
+        # ---- Step 3: 从元素库中随机抽取 ----
+        art_style = rng.choice(ART_STYLES)
+        scene = rng.choice(SCENE_TYPES)
+        camera = rng.choice(CAMERA_ANGLES)
+        palette = rng.choice(COLOR_PALETTES)
+
+        # ---- Step 4: 从用户文字中提取关键词 ----
+        # 取用户输入的前80个字作为气氛参考，让图像更贴近用户实际内容
+        mood_words = user_text.strip()[:80]
+
+        # ---- Step 5: 构造丰富的多层 Prompt ----
         prompt_parts = [
-            "anime style illustration, 2D, beautiful anime art",
-            style["en"],
-            "soft shading, masterpiece, high quality, detailed",
-            "vibrant colors, emotional expression",
-            f"mood: {style['cn']}",
+            # 第一层：核心风格 + 画风
+            "anime illustration, 2D, masterpiece, high quality, detailed",
+            art_style,
+            # 第二层：情绪驱动
+            f"primary mood: {style_primary['en']}",
+            f"secondary mood: {style_secondary['en']}",
+            # 第三层：场景 + 构图
+            scene,
+            camera,
+            # 第四层：色彩
+            palette,
+            # 第五层：情感表达（固定元数据）
+            "emotional expression, beautiful composition",
+            # 第六层：用户文字直接作为气氛参考
+            f"atmosphere: {mood_words}",
         ]
         prompt = ", ".join(prompt_parts)
 
-        # ---- Step 3: URL 编码并请求 ----
+        # ---- Step 6: 加入负向提示（排除低质量）----
+        negative = (
+            "?negative=low quality, blurry, distorted, ugly, bad anatomy, "
+            "extra fingers, watermark, text, signature, nsfw, photorealistic, 3D render"
+        )
+
+        # ---- Step 7: URL 编码并请求 ----
         encoded_prompt = urllib.parse.quote(prompt)
         url = (
             f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-            "?width=512&height=512&nologo=true"
+            "?width=512&height=512&nologo=true&seed=" + str(seed)
         )
 
-        # 请求图片，设置 40 秒超时（免费 API 有时候偏慢）
-        response = requests.get(url, timeout=40)
+        # 请求图片，设置 60 秒超时（负向提示会增加处理时间）
+        response = requests.get(url, timeout=60)
 
         if response.status_code == 200 and len(response.content) > 0:
             img = Image.open(io.BytesIO(response.content))
