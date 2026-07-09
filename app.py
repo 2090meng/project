@@ -17,8 +17,12 @@ import json
 import re
 import io
 import base64
+import urllib.parse
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
+
+# requests 用于调用 Pollinations.ai 免费图像生成 API
+import requests
 
 # ============================================================
 # 页面配置（必须是第一个Streamlit命令）
@@ -72,6 +76,44 @@ EMOTION_COLORS = {
 
 # 站点URL（用于二维码，优先从secrets读取）
 SITE_URL = "https://emotion-pixel.streamlit.app"
+
+# ============================================================
+# 情绪 → 二次元插画画风映射（用于 Pollinations.ai prompt 构造）
+# ============================================================
+EMOTION_ANIME_STYLES = {
+    "快乐": {
+        "cn": "温暖阳光,柔和光晕,治愈系",
+        "en": "warm sunlight, soft glow, healing atmosphere, golden lighting",
+    },
+    "悲伤": {
+        "cn": "细雨,静谧,淡蓝忧伤",
+        "en": "gentle rain, quiet solitude, soft blue melancholy, tears",
+    },
+    "愤怒": {
+        "cn": "戏剧性光影,烈焰红,激烈",
+        "en": "dramatic lighting, intense red, storm, fierce expression",
+    },
+    "恐惧": {
+        "cn": "迷雾,神秘紫,暗影",
+        "en": "misty darkness, mysterious purple fog, shadowy, horror",
+    },
+    "惊讶": {
+        "cn": "魔法星光,明亮爆发,奇幻",
+        "en": "magical sparkle, bright burst, wonder, surprise expression",
+    },
+    "厌恶": {
+        "cn": "灰绿色调,疏离,朦胧",
+        "en": "muted green, distant haze, faded colors, disgust",
+    },
+    "期待": {
+        "cn": "金色时光,希望曙光,珊瑚色天空",
+        "en": "golden hour, hopeful sunrise, coral sky, anticipation",
+    },
+    "信任": {
+        "cn": "宁静草地,柔嫩绿色,和谐",
+        "en": "peaceful meadow, gentle green, harmony, trust",
+    },
+}
 
 # ============================================================
 # 工具函数
@@ -334,6 +376,94 @@ def generate_fingerprint(scores: dict) -> str:
     return sha.hexdigest()[:8].upper()
 
 
+def generate_anime_art(scores: dict, user_text: str) -> Image.Image:
+    """
+    根据情绪分数调用 Pollinations.ai 免费 API 生成二次元插画。
+    Pollinations.ai 无需 API Key，完全免费。
+
+    参数:
+        scores: 情绪分数字典
+        user_text: 用户输入的心情文字
+
+    返回:
+        PIL.Image: 512×512 的二次元插画（生成失败时返回占位图）
+    """
+    try:
+        # ---- Step 1: 找出主导情绪（分数最高的）----
+        top_emotion = max(scores, key=scores.get)
+        style = EMOTION_ANIME_STYLES[top_emotion]
+
+        # ---- Step 2: 构造 Prompt ----
+        # 中英混合 prompt，因为 Pollinations 对两种语言都支持
+        prompt_parts = [
+            "anime style illustration, 2D, beautiful anime art",
+            style["en"],
+            "soft shading, masterpiece, high quality, detailed",
+            "vibrant colors, emotional expression",
+            f"mood: {style['cn']}",
+        ]
+        prompt = ", ".join(prompt_parts)
+
+        # ---- Step 3: URL 编码并请求 ----
+        encoded_prompt = urllib.parse.quote(prompt)
+        url = (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            "?width=512&height=512&nologo=true"
+        )
+
+        # 请求图片，设置 40 秒超时（免费 API 有时候偏慢）
+        response = requests.get(url, timeout=40)
+
+        if response.status_code == 200 and len(response.content) > 0:
+            img = Image.open(io.BytesIO(response.content))
+            img = img.convert("RGB")
+            return img
+        else:
+            raise Exception(f"HTTP {response.status_code}, 响应大小: {len(response.content)}")
+
+    except Exception as e:
+        st.warning(f"🎨 二次元插画生成失败（{str(e)[:40]}），显示占位图。")
+        return _anime_placeholder(top_emotion if "top_emotion" in dir() else "快乐")
+
+
+def _anime_placeholder(emotion_name: str) -> Image.Image:
+    """
+    生成二次元插画的占位图（API 失败时降级）。
+    显示一个带情绪名称和提示的纯色背景卡片。
+
+    参数:
+        emotion_name: 主导情绪名称
+
+    返回:
+        PIL.Image: 512×512 占位图
+    """
+    w, h = 512, 512
+    color = EMOTION_COLORS.get(emotion_name, "#CCCCCC")
+    img = Image.new("RGB", (w, h), color)
+    draw = ImageDraw.Draw(img)
+
+    # 半透明遮罩
+    overlay = Image.new("RGBA", (w, h), (255, 255, 255, 120))
+    img = img.convert("RGBA")
+    img.paste(overlay, (0, 0), overlay)
+    img = img.convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    # 文字
+    try:
+        font_big = ImageFont.truetype("C:/Windows/Fonts/simhei.ttf", 36)
+        font_small = ImageFont.truetype("C:/Windows/Fonts/simhei.ttf", 18)
+    except Exception:
+        font_big = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+
+    draw.text((w // 2 - 100, h // 2 - 40), f"✨ {emotion_name} ✨", fill="#333333", font=font_big)
+    draw.text((w // 2 - 140, h // 2 + 20), "二次元插画生成中...", fill="#666666", font=font_small)
+    draw.text((w // 2 - 100, h // 2 + 55), "请稍后重试", fill="#888888", font=font_small)
+
+    return img
+
+
 def generate_qrcode(target_url: str) -> Image.Image:
     """
     生成指向指定URL的二维码图片。
@@ -388,73 +518,74 @@ def base64_to_img(b64_string: str) -> Image.Image:
 
 def create_share_card(
     pixel_art: Image.Image,
+    anime_art: Image.Image | None,
     poem: str,
     fingerprint: str,
     qr_img: Image.Image,
 ) -> Image.Image:
     """
-    创建分享卡片图片：包含像素画、诗句、指纹和二维码。
+    创建分享卡片图片：包含像素画、二次元插画、诗句、指纹和二维码。
 
-    卡片布局（600×400，白底）：
-      ┌────────────────────────────────┐
-      │  像素画(160×160)  │ 情绪诗     │
-      │  (左侧居中)       │ (右上)     │
-      │                   │ 情绪指纹   │
-      │                   │ (右中)     │
-      │  二维码(80×80)   │            │
-      │  (左下角)        │            │
-      └────────────────────────────────┘
+    卡片布局（700×420，白底）：
+      ┌─────────────────────────────────────────┐
+      │  像素画(100×100)  二次元(100×100)  │ 诗  │
+      │  (左侧)           (左侧中)        │ 句  │
+      │                                   │ 指  │
+      │  二维码(80×80)                    │ 纹  │
+      │  (左下角)                         │     │
+      └─────────────────────────────────────────┘
 
     参数:
         pixel_art: 像素画PIL图像
+        anime_art: 二次元插画PIL图像（可为None）
         poem: 诗句文字
         fingerprint: 情绪指纹字符串
         qr_img: 二维码图像
 
     返回:
-        PIL.Image: 600×400的分享卡片
+        PIL.Image: 700×420的分享卡片
     """
-    card_w, card_h = 600, 400
+    card_w, card_h = 700, 420
     card = Image.new("RGB", (card_w, card_h), "#FFFFFF")
     card_draw = ImageDraw.Draw(card)
 
-    # ---- 左侧：像素画（放大显示）----
-    pixel_resized = pixel_art.resize((160, 160), Image.NEAREST)
-    card.paste(pixel_resized, (40, 120))
+    # ---- 左侧：像素画 ----
+    pixel_resized = pixel_art.resize((100, 100), Image.NEAREST)
+    card.paste(pixel_resized, (30, 130))
+
+    # ---- 左侧中：二次元插画 ----
+    if anime_art is not None:
+        anime_resized = anime_art.resize((100, 100), Image.LANCZOS)
+        card.paste(anime_resized, (140, 130))
 
     # ---- 右侧：诗句 + 情绪指纹 ----
     try:
-        # 尝试使用中文字体
         font_poem = ImageFont.truetype("C:/Windows/Fonts/simhei.ttf", 20)
         font_fingerprint = ImageFont.truetype("C:/Windows/Fonts/consola.ttf", 16)
         font_label = ImageFont.truetype("C:/Windows/Fonts/simhei.ttf", 14)
     except Exception:
-        # 降级到默认字体（Pillow自带，不支持中文）
         font_poem = ImageFont.load_default()
         font_fingerprint = ImageFont.load_default()
         font_label = ImageFont.load_default()
 
-    # 标题
-    card_draw.text((240, 40), "🎨 情绪像素 · 心情艺术品", fill="#333333", font=font_label)
+    card_draw.text((280, 40), "🎨 情绪像素 · 心情艺术品", fill="#333333", font=font_label)
 
-    # 诗句
     lines = poem.strip().split("\n")
     y_offset = 100
     for line in lines:
-        card_draw.text((240, y_offset), line, fill="#444444", font=font_poem)
+        card_draw.text((280, y_offset), line, fill="#444444", font=font_poem)
         y_offset += 32
 
-    # 情绪指纹
-    card_draw.text((240, 200), f"情绪指纹：{fingerprint}", fill="#888888", font=font_fingerprint)
+    card_draw.text((280, 200), f"情绪指纹：{fingerprint}", fill="#888888", font=font_fingerprint)
 
     # ---- 底部：二维码 ----
-    qr_resized = qr_img.resize((100, 100), Image.NEAREST)
-    card.paste(qr_resized, (40, 290))
-    card_draw.text((150, 330), "扫码体验 →", fill="#AAAAAA", font=font_label)
+    qr_resized = qr_img.resize((80, 80), Image.NEAREST)
+    card.paste(qr_resized, (30, 300))
+    card_draw.text((120, 330), "扫码体验 →", fill="#AAAAAA", font=font_label)
 
     # ---- 分隔线 ----
-    card_draw.line([(20, 380), (580, 380)], fill="#EEEEEE", width=1)
-    card_draw.text((200, 382), "用像素记录每一刻的心情 ✨", fill="#CCCCCC", font=font_label)
+    card_draw.line([(20, 398), (680, 398)], fill="#EEEEEE", width=1)
+    card_draw.text((220, 400), "用像素记录每一刻的心情 ✨", fill="#CCCCCC", font=font_label)
 
     return card
 
@@ -511,6 +642,10 @@ if generate_clicked:
             # 步骤4：生成情绪指纹
             fingerprint = generate_fingerprint(scores)
 
+        with st.spinner("🎌 AI正在绘制二次元插画..."):
+            # 步骤5：调用免费API生成二次元插画
+            anime_art = generate_anime_art(scores, user_input.strip())
+
         # ---- 保存到历史记录 ----
         record = {
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -519,6 +654,7 @@ if generate_clicked:
             "poem": poem,
             "fingerprint": fingerprint,
             "pixel_art_b64": img_to_base64(pixel_art),
+            "anime_art_b64": img_to_base64(anime_art),
         }
         st.session_state.history.append(record)
 
@@ -535,16 +671,30 @@ if st.session_state.history:
 
     st.subheader("✨ 你的情绪艺术品")
 
-    col_left, col_right = st.columns([1, 2])
+    col_left, col_mid, col_right = st.columns([1, 1, 2])
 
     with col_left:
         # 显示像素画
         pixel_art_img = base64_to_img(latest["pixel_art_b64"])
         st.image(
             pixel_art_img.resize((200, 200), Image.NEAREST),
-            caption="情绪像素画",
+            caption="🎨 情绪像素画",
             use_container_width=True,
         )
+
+    with col_mid:
+        # 显示二次元插画（如果有的话）
+        anime_b64 = latest.get("anime_art_b64", "")
+        if anime_b64:
+            anime_img = base64_to_img(anime_b64)
+            st.image(
+                anime_img.resize((200, 200), Image.LANCZOS),
+                caption="🎌 AI二次元插画",
+                use_container_width=True,
+            )
+        else:
+            # 旧记录没有二次元插画时显示提示
+            st.info("🎌 暂无插画\n\n重新生成即可获得二次元插画")
 
     with col_right:
         # ---- 情绪分数条 ----
@@ -586,11 +736,15 @@ if st.session_state.history:
     st.divider()
     share_col, _, _, _ = st.columns([1, 1, 1, 1])
     with share_col:
-        # 生成二维码和分享卡片
+        # 获取二次元插画（旧记录可能没有）
+        anime_b64 = latest.get("anime_art_b64", "")
+        anime_img = base64_to_img(anime_b64) if anime_b64 else None
+
         qr_url = st.secrets.get("SITE_URL", SITE_URL)
         qr_img = generate_qrcode(qr_url)
         share_card = create_share_card(
             pixel_art_img,
+            anime_img,
             latest["poem"],
             latest["fingerprint"],
             qr_img,
@@ -640,11 +794,25 @@ with st.sidebar:
                 f"🎨 {record['time']} — {record['poem'].split(chr(10))[0]}...",
                 expanded=(idx == 0),  # 最新一条默认展开
             ):
-                # 缩略图
-                st.image(
-                    pixel_img.resize((120, 120), Image.NEAREST),
-                    use_container_width=False,
-                )
+                # 两栏：像素画 + 二次元插画
+                gal_left, gal_right = st.columns(2)
+                with gal_left:
+                    st.image(
+                        pixel_img.resize((120, 120), Image.NEAREST),
+                        caption="像素画",
+                        use_container_width=False,
+                    )
+                with gal_right:
+                    anime_b64_hist = record.get("anime_art_b64", "")
+                    if anime_b64_hist:
+                        anime_img_hist = base64_to_img(anime_b64_hist)
+                        st.image(
+                            anime_img_hist.resize((120, 120), Image.LANCZOS),
+                            caption="二次元",
+                            use_container_width=False,
+                        )
+                    else:
+                        st.caption("暂无插画")
 
                 # 完整诗句
                 st.markdown(f"**诗句：**\n>{record['poem']}")
@@ -659,10 +827,12 @@ with st.sidebar:
                 st.caption(scores_text)
 
                 # 每条记录也有下载按钮
+                anime_hist = base64_to_img(anime_b64_hist) if anime_b64_hist else None
                 qr_url = st.secrets.get("SITE_URL", SITE_URL)
                 qr_img = generate_qrcode(qr_url)
                 share_card = create_share_card(
                     pixel_img,
+                    anime_hist,
                     record["poem"],
                     record["fingerprint"],
                     qr_img,
