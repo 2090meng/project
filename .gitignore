@@ -6,7 +6,7 @@ __pycache__/
 *.pyc
 
 # IDE
-.claude/
+.claude/settings.local.json
 .vscode/
 .idea/
 
