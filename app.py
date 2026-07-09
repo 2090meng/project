@@ -268,6 +268,51 @@ def analyze_emotion(user_text: str, use_mock: bool = False) -> dict:
         return get_mock_scores(user_text)
 
 
+def generate_poem(user_text: str, scores: dict, use_mock: bool = False) -> str:
+    """DeepSeek API 生成两句押韵诗（每句 ≤10 字）。"""
+    if use_mock or not api_available:
+        return get_mock_poem(scores)
+    try:
+        sorted_e = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        top_emotions = f"{sorted_e[0][0]}({sorted_e[0][1]}分)和{sorted_e[1][0]}({sorted_e[1][1]}分)"
+        system_prompt = (
+            "你是一个才华横溢的诗人。请根据用户的情绪分析结果创作两行诗。\n"
+            "要求：\n1. 每行不超过10个汉字\n2. 两行的最后一个字必须押韵\n"
+            "3. 诗句要优美、有诗意，体现用户的主导情绪\n4. 不要使用标点符号\n\n"
+            '请严格按以下JSON格式返回：\n{"line1": "第一行诗", "line2": "第二行诗"}'
+        )
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"用户心情：{user_text}\n主导情绪：{top_emotions}\n完整情绪分数：{scores}"},
+            ],
+            temperature=0.9, max_tokens=150,
+            response_format={"type": "json_object"}, timeout=15,
+        )
+        data = json.loads(response.choices[0].message.content.strip())
+        return f"{data.get('line1', '').strip()}\n{data.get('line2', '').strip()}"
+    except Exception as e:
+        st.warning(f"⚠️ 诗句生成API调用失败（{str(e)[:50]}），已降级。")
+        return get_mock_poem(scores)
+
+
+def get_mock_poem(scores: dict) -> str:
+    """根据主导情绪返回预设诗句。"""
+    top_emotion = max(scores, key=scores.get)
+    poems = {
+        "快乐": "阳光洒满心房暖\n笑意盈盈岁月安",
+        "悲伤": "细雨如丝落窗前\n心事重重夜未眠",
+        "愤怒": "烈焰翻腾胸中烧\n怒涛拍岸风雨摇",
+        "恐惧": "暗影重重心微颤\n迷雾深处步履慢",
+        "惊讶": "奇境乍现眼前亮\n惊叹之余心已往",
+        "厌恶": "浊浪排空心渐远\n清流自在寻芳甸",
+        "期待": "星辰大海梦为马\n明日花开满枝丫",
+        "信任": "绿荫如盖护心安\n相知相守两不厌",
+    }
+    return poems.get(top_emotion, "心有万象皆成画\n情如像素亦生花")
+
+
 def emotion_namer(user_text: str, scores: dict, use_mock: bool = False) -> str:
     """DeepSeek API 生成诗意情绪命名（如「暖阳型·坚定温柔」）。"""
     if use_mock or not api_available:
