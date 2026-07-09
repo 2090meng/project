@@ -1,0 +1,15 @@
+# Streamlit secrets - 包含 API Key，绝不上传
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.claude/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
