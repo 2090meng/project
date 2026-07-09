@@ -7,8 +7,7 @@
 将心情文字转化为像素画、二次元插画、AI诗句和情绪指纹的Streamlit应用。
 - DeepSeek API：情绪分析、诗句生成、诗意命名、情绪散文
 - Pollinations.ai：免费二次元插画
-- Unsplash API：情绪动态壁纸背景
-- GIPHY API：微动效氛围增强
+- 纯 CSS 动态渐变 + 飘落粒子动画：情绪背景
 """
 
 # ============================================================
@@ -56,8 +55,7 @@ except Exception:
 # ============================================================
 # 外部 API Key 检查
 # ============================================================
-UNSPLASH_KEY = st.secrets.get("UNSPLASH_ACCESS_KEY", "")
-GIPHY_KEY = st.secrets.get("GIPHY_API_KEY", "")
+# （Unsplash 和 GIPHY 已移除，改用纯 CSS 动态背景）
 
 # ============================================================
 # 跨平台中文字体加载
@@ -120,20 +118,9 @@ EMOTION_COLORS = {
 SITE_URL = "https://emotion-pixel.streamlit.app"
 
 # ============================================================
-# 动态壁纸：情绪 → 搜索关键词
+# 纯 CSS 动态背景：情绪 → 渐变 + 飘落粒子动画
+# 无需任何外部 API，完全免费，永不失效
 # ============================================================
-WALLPAPER_KEYWORDS = {
-    "快乐": {"unsplash": "warm sunlight golden flowers", "giphy": "sparkle sunshine"},
-    "悲伤": {"unsplash": "gentle rain window blue", "giphy": "rain window aesthetic"},
-    "愤怒": {"unsplash": "dramatic storm sky red", "giphy": "fire embers floating"},
-    "恐惧": {"unsplash": "misty fog forest purple", "giphy": "fog drifting smoke"},
-    "惊讶": {"unsplash": "magical stars sparkle sky", "giphy": "stars twinkle sparkle"},
-    "厌恶": {"unsplash": "muted green forest moss", "giphy": "leaves falling gentle"},
-    "期待": {"unsplash": "golden hour sunrise warm", "giphy": "clouds drifting sunrise"},
-    "信任": {"unsplash": "peaceful meadow green spring", "giphy": "petals floating spring"},
-}
-
-# 降级用纯色渐变
 WALLPAPER_GRADIENTS = {
     "快乐": "linear-gradient(135deg, #FFF8E1, #FFF3CD, #FFECB3)",
     "悲伤": "linear-gradient(135deg, #E3E8F0, #CED6E0, #A4B0BE)",
@@ -143,6 +130,18 @@ WALLPAPER_GRADIENTS = {
     "厌恶": "linear-gradient(135deg, #E8EDE4, #D4DDCE, #B8C7AE)",
     "期待": "linear-gradient(135deg, #FFF0E5, #FFE0C8, #FDD0A8)",
     "信任": "linear-gradient(135deg, #E8F5E0, #D4EDC8, #B8E0A0)",
+}
+
+# 飘落粒子颜色（对应情绪色 + 白色）
+PARTICLE_COLORS = {
+    "快乐": ["#FFD93D", "#FFE88A", "#FFECB3", "#FFF"],
+    "悲伤": ["#4A69BD", "#7B93D4", "#CED6E0", "#FFF"],
+    "愤怒": ["#E55039", "#F08070", "#F8CECC", "#FFF"],
+    "恐惧": ["#6A0572", "#9B5DA8", "#E0CCE5", "#FFF"],
+    "惊讶": ["#F3A683", "#F7C4AD", "#FFE4D0", "#FFF"],
+    "厌恶": ["#78A178", "#A0BDA0", "#D4DDCE", "#FFF"],
+    "期待": ["#F19066", "#F5B08A", "#FFE0C8", "#FFF"],
+    "信任": ["#A8E06C", "#C1E98A", "#D4EDC8", "#FFF"],
 }
 
 # ============================================================
@@ -471,89 +470,103 @@ def _anime_placeholder(emotion_name: str) -> Image.Image:
 
 
 # ============================================================
-# 工具函数 — 动态壁纸（Unsplash + GIPHY）
+# 纯 CSS 动态背景注入 — 情绪渐变 + 飘落粒子动画
+# 无需 API Key，完全免费，永不失效
 # ============================================================
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_unsplash_bg(emotion: str) -> str | None:
-    """从 Unsplash API 获取情绪相关图片 URL。缓存 1 小时。"""
-    if not UNSPLASH_KEY:
-        return None
-    try:
-        query = WALLPAPER_KEYWORDS[emotion]["unsplash"]
-        url = "https://api.unsplash.com/photos/random"
-        resp = requests.get(url, params={
-            "query": query, "orientation": "landscape",
-            "client_id": UNSPLASH_KEY, "w": "1200",
-        }, timeout=8)
-        if resp.status_code == 200:
-            return resp.json()["urls"]["regular"]
-    except Exception:
-        pass
-    return None
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_giphy_gif(emotion: str) -> str | None:
-    """从 GIPHY API 获取情绪相关 GIF URL。缓存 1 小时。"""
-    if not GIPHY_KEY:
-        return None
-    try:
-        query = WALLPAPER_KEYWORDS[emotion]["giphy"]
-        url = "https://api.giphy.com/v1/gifs/search"
-        resp = requests.get(url, params={
-            "api_key": GIPHY_KEY, "q": query,
-            "rating": "g", "limit": 5,
-        }, timeout=8)
-        if resp.status_code == 200 and resp.json()["data"]:
-            idx = random.randint(0, min(4, len(resp.json()["data"]) - 1))
-            return resp.json()["data"][idx]["images"]["fixed_height"]["url"]
-    except Exception:
-        pass
-    return None
-
-
 def inject_wallpaper_css(top_emotion: str):
-    """向页面注入动态壁纸 CSS。照片作背景 + GIF 作氛围层。"""
-    unsplash_url = fetch_unsplash_bg(top_emotion)
-    giphy_url = fetch_giphy_gif(top_emotion)
+    """向页面注入动态背景 CSS：情绪渐变 + 飘落粒子动画。"""
     gradient = WALLPAPER_GRADIENTS.get(top_emotion, WALLPAPER_GRADIENTS["快乐"])
+    colors = PARTICLE_COLORS.get(top_emotion, PARTICLE_COLORS["快乐"])
 
-    css_parts = [
-        '<style>',
-        '/* 让主 app 容器半透明以透出背景 */',
-        '.stApp { background: transparent !important; }',
-        '.main .block-container {',
-        '  background: rgba(255,255,255,0.72) !important;',
-        '  backdrop-filter: blur(6px);',
-        '  border-radius: 16px;',
-        '  margin-top: 1rem;',
-        '}',
-        '/* 基础渐变 */',
-        f'body {{ background: {gradient} !important; }}',
-        f'.stApp {{ background: {gradient} !important; }}',
-    ]
-
-    if unsplash_url:
-        css_parts.append(
-            f'body::before {{'
-            f'  content: ""; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;'
-            f'  background: url("{unsplash_url}") center/cover no-repeat;'
-            f'  opacity: 0.18; z-index: -2;'
-            f'}}'
+    # 生成每个粒子的随机参数（位置、延迟、尺寸、颜色）
+    import random
+    rng = random.Random(hash(top_emotion) + 42)
+    particles_css = []
+    for i in range(15):
+        left = rng.randint(0, 100)
+        delay = rng.uniform(0, 8)
+        duration = rng.uniform(6, 14)
+        size = rng.randint(4, 12)
+        color = colors[i % len(colors)]
+        opacity = rng.uniform(0.15, 0.4)
+        particles_css.append(
+            f".particle-{i} {{"
+            f"  left:{left}%;"
+            f"  width:{size}px;height:{size}px;"
+            f"  background:{color};"
+            f"  opacity:{opacity:.2f};"
+            f"  animation:floatParticle {duration:.1f}s ease-in infinite;"
+            f"  animation-delay:{delay:.1f}s;"
+            f"}}"
         )
 
-    if giphy_url:
-        css_parts.append(
-            f'body::after {{'
-            f'  content: ""; position: fixed; top: 5%; right: 5%; width: 280px; height: 280px;'
-            f'  background: url("{giphy_url}") center/contain no-repeat;'
-            f'  opacity: 0.12; z-index: -1; pointer-events: none;'
-            f'}}'
-        )
+    particles_html = "\n".join(
+        [f'<div class="particle particle-{i}"></div>' for i in range(15)]
+    )
+    particles_css_block = "\n".join(particles_css)
 
-    css_parts.append('</style>')
-    st.markdown("\n".join(css_parts), unsafe_allow_html=True)
+    css_html = f"""
+    <style>
+    /* 页面基础渐变 */
+    .stApp {{
+        background: {gradient} !important;
+        background-attachment: fixed !important;
+    }}
+    /* 主容器半透明毛玻璃 */
+    .main .block-container {{
+        background: rgba(255,255,255,0.70) !important;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border-radius: 16px;
+        margin-top: 0.8rem;
+    }}
+    /* 侧边栏 */
+    section[data-testid="stSidebar"] > div {{
+        background: rgba(255,255,255,0.75) !important;
+        backdrop-filter: blur(6px);
+    }}
+    /* 飘落粒子容器 */
+    .particle-container {{
+        position: fixed;
+        top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        pointer-events: none;
+        z-index: 0;
+        overflow: hidden;
+    }}
+    /* 粒子 */
+    .particle {{
+        position: absolute;
+        top: -20px;
+        border-radius: 50%;
+        pointer-events: none;
+    }}
+    /* 飘落动画 */
+    @keyframes floatParticle {{
+        0% {{
+            transform: translateY(-30px) translateX(0) rotate(0deg);
+            opacity: 0;
+        }}
+        10% {{
+            opacity: 1;
+        }}
+        90% {{
+            opacity: 1;
+        }}
+        100% {{
+            transform: translateY(105vh) translateX(40px) rotate(360deg);
+            opacity: 0;
+        }}
+    }}
+    /* 粒子个体样式 */
+    {particles_css_block}
+    </style>
+    <div class="particle-container">
+        {particles_html}
+    </div>
+    """
+    st.markdown(css_html, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1056,4 +1069,4 @@ with fc2:
         st.caption(f"🕐 最近：{st.session_state.history[-1]['time']}")
 with fc3:
     st.caption("[🐙 GitHub](https://github.com/2090meng/project)")
-st.caption("🎨 情绪像素 · 心情艺术品 | Powered by DeepSeek + Streamlit + Unsplash + GIPHY")
+st.caption("🎨 情绪像素 · 心情艺术品 | Powered by DeepSeek + Streamlit")
