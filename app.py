@@ -115,6 +115,50 @@ EMOTION_COLORS = {
     "信任": "#A8E06C",
 }
 
+# --- 情绪 BGM 音乐参数（Web Audio API 生成式背景音乐） ---
+EMOTION_BGM = {
+    "快乐": {
+        "scale": [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25],
+        "bpm": 88, "wave": "triangle", "name": "阳光小调",
+        "description": "C大调五声音阶 · 明亮三角波 · 雀跃节奏",
+    },
+    "悲伤": {
+        "scale": [220.00, 261.63, 293.66, 329.63, 392.00, 440.00, 523.25],
+        "bpm": 52, "wave": "sine", "name": "雨夜轻吟",
+        "description": "A小调五声音阶 · 柔和正弦波 · 缓慢悠长",
+    },
+    "愤怒": {
+        "scale": [329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33],
+        "bpm": 115, "wave": "sawtooth", "name": "烈焰律动",
+        "description": "E弗里吉亚调式 · 锯齿波 · 激烈短促",
+    },
+    "恐惧": {
+        "scale": [261.63, 311.13, 369.99, 415.30, 466.16, 523.25, 622.25],
+        "bpm": 42, "wave": "sine", "name": "暗影迷雾",
+        "description": "减音阶 · 颤音正弦波 · 幽暗缓慢",
+    },
+    "惊讶": {
+        "scale": [261.63, 293.66, 329.63, 369.99, 415.30, 466.16, 523.25],
+        "bpm": 100, "wave": "triangle", "name": "星光奇迹",
+        "description": "全音音阶 · 清脆三角波 · 灵动跳跃",
+    },
+    "厌恶": {
+        "scale": [261.63, 369.99, 392.00, 554.37, 587.33, 830.61],
+        "bpm": 62, "wave": "square", "name": "疏离迴响",
+        "description": "增四度音程 · 方波 · 疏离低语",
+    },
+    "期待": {
+        "scale": [349.23, 392.00, 440.00, 523.25, 587.33, 659.25, 698.46],
+        "bpm": 76, "wave": "triangle", "name": "晨曦序曲",
+        "description": "F大调五声音阶 · 温暖三角波 · 舒缓期盼",
+    },
+    "信任": {
+        "scale": [196.00, 220.00, 246.94, 293.66, 329.63, 392.00, 440.00],
+        "bpm": 64, "wave": "sine", "name": "绿荫和鸣",
+        "description": "G大调五声音阶 · 纯净正弦波 · 温暖安定",
+    },
+}
+
 SITE_URL = "https://emotion-pixel.streamlit.app"
 
 # --- 缓存与存储上限 ---
@@ -745,6 +789,330 @@ def inject_wallpaper_css(top_emotion: str):
     st.markdown(css_html, unsafe_allow_html=True)
 
 
+def inject_bgm_audio(top_emotion: str):
+    """向页面注入基于 Web Audio API 的生成式情绪背景音乐。
+
+    每种情绪对应不同的音阶（scale）、BPM、波形和节奏模式。
+    使用 Web Audio API 实时合成，无需任何外部音频文件。
+    包含播放/暂停按钮和音量控制。
+    """
+    bgm = EMOTION_BGM.get(top_emotion, EMOTION_BGM["快乐"])
+    scale = bgm["scale"]
+    bpm = bgm["bpm"]
+    wave = bgm["wave"]
+    name = bgm["name"]
+    desc = bgm["description"]
+
+    html_code = f'''
+    <!-- 🎵 情绪 BGM 播放器 -->
+    <style>
+    .bgm-player {{
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: rgba(255,255,255,0.88);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 40px;
+        padding: 8px 18px 8px 8px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+        font-family: system-ui, -apple-system, sans-serif;
+        transition: all 0.3s ease;
+        user-select: none;
+    }}
+    .bgm-player:hover {{
+        box-shadow: 0 6px 32px rgba(0,0,0,0.14);
+        transform: translateY(-2px);
+    }}
+    .bgm-btn {{
+        width: 42px; height: 42px;
+        border-radius: 50%;
+        border: none;
+        background: linear-gradient(135deg, #6C5CE7, #A29BFE);
+        color: #fff;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.25s ease;
+        flex-shrink: 0;
+    }}
+    .bgm-btn:hover {{ transform: scale(1.08); }}
+    .bgm-btn.playing {{
+        background: linear-gradient(135deg, #F19066, #F5B08A);
+        animation: bgmPulse 2s ease-in-out infinite;
+    }}
+    @keyframes bgmPulse {{
+        0%, 100% {{ box-shadow: 0 0 0 0 rgba(241,144,102,0.4); }}
+        50%      {{ box-shadow: 0 0 0 12px rgba(241,144,102,0); }}
+    }}
+    .bgm-info {{
+        display: flex;
+        flex-direction: column;
+        min-width: 80px;
+    }}
+    .bgm-name {{
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        line-height: 1.2;
+    }}
+    .bgm-desc {{
+        font-size: 10px;
+        color: #999;
+        line-height: 1.3;
+        max-width: 160px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }}
+    .bgm-vol {{
+        width: 60px;
+        accent-color: #6C5CE7;
+        cursor: pointer;
+    }}
+    @media (max-width: 600px) {{
+        .bgm-player {{
+            bottom: 12px;
+            right: 10px;
+            padding: 6px 12px 6px 6px;
+            gap: 6px;
+        }}
+        .bgm-desc {{ display: none; }}
+        .bgm-vol {{ width: 40px; }}
+    }}
+    </style>
+
+    <div class="bgm-player" id="bgm-player">
+        <button class="bgm-btn" id="bgm-btn" title="播放 / 暂停">▶</button>
+        <div class="bgm-info">
+            <span class="bgm-name">🎵 {name}</span>
+            <span class="bgm-desc">{desc}</span>
+        </div>
+        <input type="range" class="bgm-vol" id="bgm-vol"
+               min="0" max="100" value="30" title="音量">
+    </div>
+
+    <script>
+    (function() {{
+        // 防止重复初始化
+        if (window._bgmInitialized) return;
+        window._bgmInitialized = true;
+
+        // --- Web Audio 引擎 ---
+        let audioCtx = null;
+        let bgmRunning = false;
+        let bgmTimer = null;
+        let masterGain = null;
+        let currentVolume = 0.3;
+
+        const scale = {scale};
+        const bpm = {bpm};
+        const waveType = "{wave}";
+        const beatInterval = 60000 / bpm / 2; // 八分音符间隔(ms)
+
+        function ensureContext() {{
+            if (!audioCtx) {{
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                masterGain = audioCtx.createGain();
+                masterGain.gain.value = currentVolume;
+                masterGain.connect(audioCtx.destination);
+            }}
+            if (audioCtx.state === 'suspended') {{
+                audioCtx.resume();
+            }}
+            return audioCtx;
+        }}
+
+        function playNote(freq, startTime, duration, vel) {{
+            const ctx = ensureContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.type = waveType;
+            osc.frequency.setValueAtTime(freq, startTime);
+
+            // 包络：柔和起音 + 自然衰减
+            const attack = 0.015;
+            const release = duration * 0.4;
+            gain.gain.setValueAtTime(0, startTime);
+            gain.gain.linearRampToValueAtTime(vel * currentVolume, startTime + attack);
+            gain.gain.setValueAtTime(vel * currentVolume, startTime + duration - release);
+            gain.gain.linearRampToValueAtTime(0.0001, startTime + duration);
+
+            // 加一点混响感：轻微频率抖动
+            osc.detune.setValueAtTime(0, startTime);
+            osc.detune.linearRampToValueAtTime(
+                (Math.random() - 0.5) * 6, startTime + duration * 0.5
+            );
+
+            osc.connect(gain);
+            gain.connect(masterGain);
+            osc.start(startTime);
+            osc.stop(startTime + duration + 0.05);
+        }}
+
+        // --- 旋律生成器：基于情绪音阶的随机漫步 ---
+        let melodyIndex = Math.floor(scale.length / 2);
+        let melodyStep = 0;
+
+        function pickNextNote() {{
+            // 随机漫步，偏向音阶中心
+            const center = Math.floor(scale.length / 2);
+            const pull = (center - melodyIndex) * 0.15;
+            const step = Math.round((Math.random() - 0.5) * 2.4 + pull);
+            melodyIndex = Math.max(0, Math.min(scale.length - 1, melodyIndex + step));
+            return scale[melodyIndex];
+        }}
+
+        // --- Low drone: 低音持续音 ---
+        function startDrone() {{
+            const ctx = ensureContext();
+            const droneFreq = scale[0] / 2; // 低八度
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = droneFreq;
+            gain.gain.value = currentVolume * 0.12;
+            osc.connect(gain);
+            gain.connect(masterGain);
+            osc.start();
+            window._bgmDrone = osc;
+            window._bgmDroneGain = gain;
+        }}
+
+        function stopDrone() {{
+            if (window._bgmDrone) {{
+                try {{ window._bgmDrone.stop(); }} catch(e) {{}}
+                window._bgmDrone = null;
+            }}
+        }}
+
+        // --- 节拍 loop ---
+        let beatCount = 0;
+        function scheduleLoop() {{
+            if (!bgmRunning) return;
+
+            const now = audioCtx.currentTime;
+
+            // 每拍演奏一个音符（部分拍为休止/弱音）
+            const notesPerBar = 8;
+            for (let i = 0; i < notesPerBar; i++) {{
+                const t = now + i * beatInterval / 1000;
+                const barPos = (beatCount + i) % notesPerBar;
+
+                // 节奏模式：强拍在第0,2,4,6位置，第1,3,5,7为弱拍或休止
+                let vel = 0;
+                if (barPos === 0 || barPos === 4) {{
+                    // 强拍：主旋律音
+                    const freq = pickNextNote();
+                    playNote(freq, t, 0.35, 0.22);
+                    // 偶尔加一个高音泛音
+                    if (Math.random() < 0.35) {{
+                        const harmonic = scale[Math.min(scale.length-1, melodyIndex+2)];
+                        playNote(harmonic, t + 0.02, 0.28, 0.10);
+                    }}
+                    vel = 0.22;
+                }} else if (barPos === 2 || barPos === 6) {{
+                    // 中拍：轻音
+                    const freq = scale[melodyIndex];
+                    playNote(freq, t, 0.22, 0.10);
+                    vel = 0.10;
+                }} else {{
+                    // 弱拍：极轻的根音泛音
+                    if (Math.random() < 0.3) {{
+                        playNote(scale[0], t, 0.15, 0.05);
+                    }}
+                }}
+
+                melodyStep++;
+                // 每隔几小节重新校准中心
+                if (melodyStep % 32 === 0) {{
+                    melodyIndex = Math.floor(scale.length / 2) +
+                        Math.floor((Math.random() - 0.5) * 3);
+                }}
+            }}
+
+            beatCount += notesPerBar;
+
+            // 根据 BPM 动态调度下一轮
+            const loopMs = notesPerBar * beatInterval;
+            bgmTimer = setTimeout(scheduleLoop, loopMs - 10); // 略早10ms防止漂移
+        }}
+
+        // --- 播放/暂停控制 ---
+        const btn = document.getElementById('bgm-btn');
+        const volSlider = document.getElementById('bgm-vol');
+
+        function startBGM() {{
+            ensureContext();
+            bgmRunning = true;
+            btn.textContent = '⏸';
+            btn.classList.add('playing');
+            startDrone();
+            beatCount = 0;
+            melodyIndex = Math.floor(scale.length / 2);
+            scheduleLoop();
+        }}
+
+        function stopBGM() {{
+            bgmRunning = false;
+            btn.textContent = '▶';
+            btn.classList.remove('playing');
+            stopDrone();
+            if (bgmTimer) {{
+                clearTimeout(bgmTimer);
+                bgmTimer = null;
+            }}
+        }}
+
+        btn.addEventListener('click', () => {{
+            if (bgmRunning) {{
+                stopBGM();
+            }} else {{
+                startBGM();
+            }}
+        }});
+
+        // --- 音量控制 ---
+        volSlider.addEventListener('input', () => {{
+            currentVolume = parseFloat(volSlider.value) / 100;
+            if (masterGain) {{
+                masterGain.gain.setValueAtTime(currentVolume, audioCtx.currentTime + 0.02);
+            }}
+            if (window._bgmDroneGain) {{
+                window._bgmDroneGain.gain.setValueAtTime(
+                    currentVolume * 0.12, audioCtx.currentTime + 0.02
+                );
+            }}
+        }});
+
+        // --- 页面卸载清理 ---
+        window.addEventListener('beforeunload', () => {{
+            stopBGM();
+            if (audioCtx) {{
+                audioCtx.close();
+            }}
+        }});
+
+        // --- 自动开始（用户已与页面交互） ---
+        setTimeout(() => {{
+            startBGM();
+        }}, 800);
+
+        console.log('🎵 情绪 BGM 已就绪：「{name}」| BPM={bpm} | {wave}波 | {desc}');
+    }})();
+    </script>
+    '''
+    st.markdown(html_code, unsafe_allow_html=True)
+
+
 # ============================================================
 # 工具函数 — 二维码、Base64、分享卡片
 # ============================================================
@@ -1028,9 +1396,10 @@ with tab_create:
         latest = st.session_state.pending_result
         top_e = dominant_emotion(latest["scores"])
 
-        # 注入动态壁纸（仅本次揭示会话一次）
+        # 注入动态壁纸 + BGM（仅本次揭示会话一次）
         if not st.session_state._css_wallpaper_injected:
             inject_wallpaper_css(top_e)
+            inject_bgm_audio(top_e)
             st.session_state._css_wallpaper_injected = True
 
         # ---- 阶段 1 (0.0s): 🎭 神秘字幕 ----
