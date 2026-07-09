@@ -76,6 +76,9 @@ EMOTION_COLORS = {
 
 import random
 
+# 站点URL（用于二维码，优先从secrets读取）
+SITE_URL = "https://emotion-pixel.streamlit.app"
+
 # ============================================================
 # 情绪 → 二次元插画画风映射（用于 Pollinations.ai prompt 构造）
 # ============================================================
