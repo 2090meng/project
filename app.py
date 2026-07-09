@@ -313,6 +313,63 @@ def get_mock_poem(scores: dict) -> str:
     return poems.get(top_emotion, "心有万象皆成画\n情如像素亦生花")
 
 
+# ============================================================
+# Hero / 滚动动画 CSS 注入（全局）
+# ============================================================
+
+def inject_global_animations():
+    """注入全站滚动淡入动画 + 呼吸光晕等高级 CSS。"""
+    st.markdown(
+        """
+        <style>
+        /* === 滚动淡入动画 === */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeInScale {
+            from { opacity: 0; transform: scale(0.92); }
+            to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes shimmer {
+            0%   { background-position: -200% center; }
+            100% { background-position: 200% center; }
+        }
+        @keyframes glowPulse {
+            0%, 100% { box-shadow: 0 0 20px rgba(108,92,231,0.15); }
+            50%      { box-shadow: 0 0 40px rgba(108,92,231,0.3); }
+        }
+        @keyframes floatSlow {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            33%      { transform: translateY(-10px) rotate(1deg); }
+            66%      { transform: translateY(6px) rotate(-1deg); }
+        }
+        .animate-fade-in-up {
+            animation: fadeInUp 0.8s ease forwards;
+        }
+        .animate-delay-1 { animation-delay: 0.15s; opacity: 0; }
+        .animate-delay-2 { animation-delay: 0.3s;  opacity: 0; }
+        .animate-delay-3 { animation-delay: 0.45s; opacity: 0; }
+        .animate-delay-4 { animation-delay: 0.6s;  opacity: 0; }
+
+        /* Hero 区域光晕 */
+        .hero-glow {
+            animation: glowPulse 3s ease-in-out infinite;
+        }
+        .hero-float {
+            animation: floatSlow 6s ease-in-out infinite;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# 情绪命名（继续）
+# ============================================================
+
+
 def emotion_namer(user_text: str, scores: dict, use_mock: bool = False) -> str:
     """DeepSeek API 生成诗意情绪命名（如「暖阳型·坚定温柔」）。"""
     if use_mock or not api_available:
@@ -700,7 +757,25 @@ if "pending_result" not in st.session_state:
     st.session_state.pending_result = None  # 存放正在生成中的完整记录
 
 # ============================================================
-# 顶部导航 Tab
+# 页面初始化：注入全局动画 + 显示 Hero 区域
+# ============================================================
+inject_global_animations()
+
+# Hero 光晕图样（CSS 仅用，在输入框上方展示产品气质）
+st.markdown(
+    """
+    <div style="text-align:center;padding:10px 0 0 0;margin-bottom:-16px;">
+        <div class="hero-float" style="display:inline-block;font-size:52px;
+                    filter:drop-shadow(0 4px 20px rgba(108,92,231,0.25));">
+            🎨
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ============================================================
+# 顶部 Tab
 # ============================================================
 tab_create, tab_gallery = st.tabs(["✨ 创作", "🖼️ 画廊"])
 
@@ -708,20 +783,69 @@ tab_create, tab_gallery = st.tabs(["✨ 创作", "🖼️ 画廊"])
 # Tab 1: 创作模式
 # ============================================================
 with tab_create:
-    st.title("🎨 情绪像素 · 心情艺术品")
-    st.markdown("写下你的心情，AI 将为你创作一幅独一无二的情绪像素画 ✨")
+    st.markdown(
+        """
+        <div class="animate-fade-in-up" style="text-align:center;">
+            <h1 style="font-size:2.3rem;font-weight:800;margin-bottom:6px;
+                       background:linear-gradient(135deg,#6C5CE7,#A29BFE,#F19066);
+                       -webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+                🎨 情绪像素 · 心情艺术品
+            </h1>
+            <p style="color:#888;font-size:15px;margin-bottom:20px;">
+                写下你的心情，AI 将为你创作一幅独一无二的情绪像素画 ✨
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 功能亮点条
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        st.markdown(
+            '<div class="animate-fade-in-up animate-delay-1" style="text-align:center;'
+            'background:rgba(108,92,231,0.05);border-radius:12px;padding:14px 8px;">'
+            '<div style="font-size:28px;">🧠</div>'
+            '<div style="font-size:13px;font-weight:600;color:#6C5CE7;">AI 情绪解析</div>'
+            '<div style="font-size:11px;color:#999;">8维深度检测</div></div>',
+            unsafe_allow_html=True,
+        )
+    with col_f2:
+        st.markdown(
+            '<div class="animate-fade-in-up animate-delay-2" style="text-align:center;'
+            'background:rgba(241,144,102,0.05);border-radius:12px;padding:14px 8px;">'
+            '<div style="font-size:28px;">🎌</div>'
+            '<div style="font-size:13px;font-weight:600;color:#F19066;">二次元插画</div>'
+            '<div style="font-size:11px;color:#999;">AI 为你绘画</div></div>',
+            unsafe_allow_html=True,
+        )
+    with col_f3:
+        st.markdown(
+            '<div class="animate-fade-in-up animate-delay-3" style="text-align:center;'
+            'background:rgba(78,205,196,0.05);border-radius:12px;padding:14px 8px;">'
+            '<div style="font-size:28px;">🔐</div>'
+            '<div style="font-size:13px;font-weight:600;color:#4ECDC4;">情绪指纹</div>'
+            '<div style="font-size:11px;color:#999;">独一无二签名</div></div>',
+            unsafe_allow_html=True,
+        )
 
     with st.form(key="mood_form", clear_on_submit=False):
-        user_input = st.text_area(
-            "💬 今天心情如何？",
-            placeholder="比如：今天阳光很好，走在路上收到了意外的礼物，心里暖暖的...",
-            height=100, max_chars=500, key="mood_input",
-        )
-        c1, c2, _, _ = st.columns([1, 2, 1, 1])
+        c1, c2, _ = st.columns([6, 1])
         with c1:
-            submitted = st.form_submit_button("✨ 生成", type="primary", use_container_width=True)
+            user_input = st.text_area(
+                "💬 今天心情如何？",
+                placeholder="比如：今天阳光很好，走在路上收到了意外的礼物，心里暖暖的...",
+                height=100, max_chars=500, key="mood_input",
+                label_visibility="collapsed",
+            )
         with c2:
-            st.caption("💡 提示：按 Ctrl+Enter 也可以快速生成")
+            # 占位，让按钮和输入框顶端对齐
+            st.write("")
+        col_btn, col_tip, _, _ = st.columns([1, 2, 1, 1])
+        with col_btn:
+            submitted = st.form_submit_button("✨ 生成", type="primary", use_container_width=True)
+        with col_tip:
+            st.caption("💡 Ctrl+Enter 快速生成")
 
     # ---- 处理生成逻辑 ----
     if submitted:
