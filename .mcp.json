@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "4fetch": {
+      "type": "http",
+      "url": "https://api.4fetch.com/mcp/v1/fetch"
+    },
+    "memory": {
+      "type": "http",
+      "url": "https://mem.borisinc.com/mcp"
+    },
+    "android-puppeteer-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "android-puppeteer-mcp"
+      ]
+    },
+    "mcp-server-filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@agent-infra/mcp-server-filesystem"
+      ]
+    }
+  }
+}
